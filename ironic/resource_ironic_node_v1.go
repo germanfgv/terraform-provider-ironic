@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"reflect"
 	"strconv"
 	"time"
 
@@ -349,7 +350,7 @@ func resourceNodeV1Read(d *schema.ResourceData, meta any) error {
 	if err != nil {
 		return err
 	}
-	err = d.Set("driver_info", node.DriverInfo)
+	err = d.Set("driver_info", cleanProperties(node.DriverInfo))
 	if err != nil {
 		return err
 	}
@@ -671,13 +672,15 @@ func propertiesMerge(d *schema.ResourceData, key string) map[string]any {
 func schemaToCreateOpts(d *schema.ResourceData) *nodes.CreateOpts {
 	properties := propertiesMerge(d, "root_device")
 	auto_clean := d.Get("automated_clean").(bool)
+	driver_info := parseType(d.Get("driver_info").(map[string]any))
+
 	return &nodes.CreateOpts{
 		BootInterface:       d.Get("boot_interface").(string),
 		ConductorGroup:      d.Get("conductor_group").(string),
 		ConsoleInterface:    d.Get("console_interface").(string),
 		DeployInterface:     d.Get("deploy_interface").(string),
 		Driver:              d.Get("driver").(string),
-		DriverInfo:          d.Get("driver_info").(map[string]any),
+		DriverInfo:          driver_info,
 		Extra:               d.Get("extra").(map[string]any),
 		InspectInterface:    d.Get("inspect_interface").(string),
 		ManagementInterface: d.Get("management_interface").(string),
@@ -866,4 +869,31 @@ func cleanProperties(nodeProperties map[string]any) map[string]any {
 		}
 	}
 	return properties
+}
+
+func parseType(originalMap map[string]any) map[string]any {
+	// Terraform sdkv2 schema.TypeMap only supports maps where all values are the same type
+	// This function tries to parse each value to int or bool, otherwise it keeps it as string
+	// This is useful for properties and driver_info which may contain different types of values
+	// but are represented as map[string]string in the schema
+	// Note: This function does not handle float values, as they are not commonly used in Ironic
+	newMap := make(map[string]any)
+	for k, v := range originalMap {
+		if reflect.TypeOf(v).Kind() != reflect.String {
+			newMap[k] = v
+			continue
+		}
+		number, err := strconv.Atoi(v.(string))
+		if err == nil {
+			newMap[k] = number
+			continue
+		}
+		boolean, err := strconv.ParseBool(v.(string))
+		if err == nil {
+			newMap[k] = boolean
+			continue
+		}
+		newMap[k] = v
+	}
+	return newMap
 }
